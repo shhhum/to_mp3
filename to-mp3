@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 
 EXTENSIONS=(wav flac aiff aif aifc m4a aac ogg oga opus wma ape wv mka)
 
@@ -73,6 +73,85 @@ for ext in "${EXTENSIONS[@]}"; do
 done
 find_expr+=( ')' )
 
+BAR_WIDTH=24
+
+draw_bar() {
+  # draw_bar <label> <out_us> <total_us>
+  local label="$1" out_us="$2" total_us="$3"
+  local pct=0
+  if [[ $total_us -gt 0 ]]; then
+    pct=$((out_us * 100 / total_us))
+    [[ $pct -gt 100 ]] && pct=100
+  fi
+  local filled=$((pct * BAR_WIDTH / 100))
+  local i bar=""
+  for ((i=0; i<filled; i++)); do bar+="█"; done
+  for ((i=filled; i<BAR_WIDTH; i++)); do bar+="░"; done
+  printf "\r  %s [%s] %3d%%\033[K" "$label" "$bar" "$pct"
+}
+
+render_bar() {
+  # Read ffmpeg -progress key=value stream, redraw on each progress= marker.
+  local label="$1" total_us="$2"
+  local out_us=0 key value
+  while IFS='=' read -r key value; do
+    case "$key" in
+      out_time_us|out_time_ms)
+        [[ "$value" =~ ^[0-9]+$ ]] && out_us=$value
+        ;;
+      progress)
+        if [[ "$value" == "end" ]]; then
+          draw_bar "$label" "$total_us" "$total_us"
+          printf "\n"
+          return 0
+        else
+          draw_bar "$label" "$out_us" "$total_us"
+        fi
+        ;;
+    esac
+  done
+}
+
+convert_one() {
+  local src="$1" out="$2"
+  local label llen duration total_us errlog rc
+
+  label="${src#./}"
+  llen=${#label}
+  if [[ $llen -gt 40 ]]; then
+    label="...${label:$((llen - 37))}"
+  fi
+
+  errlog=$(mktemp)
+
+  if [[ -t 1 ]] && command -v ffprobe >/dev/null 2>&1 \
+     && duration=$(ffprobe -v error -show_entries format=duration \
+                   -of default=noprint_wrappers=1:nokey=1 "$src" 2>/dev/null) \
+     && [[ -n "$duration" && "$duration" != "N/A" ]]; then
+    total_us=$(awk "BEGIN { printf \"%.0f\", $duration * 1000000 }")
+    ffmpeg -nostdin -hide_banner -loglevel error \
+           -progress pipe:1 -nostats \
+           -y -i "$src" -ab 320k -map_metadata 0 -id3v2_version 3 "$out" \
+      2>"$errlog" \
+      | render_bar "$label" "$total_us"
+    rc=${PIPESTATUS[0]}
+  else
+    $verbose && echo "convert: $src -> $out"
+    ffmpeg -nostdin -hide_banner -loglevel error -y -i "$src" \
+           -ab 320k -map_metadata 0 -id3v2_version 3 "$out" 2>"$errlog"
+    rc=$?
+  fi
+
+  if [[ $rc -ne 0 ]]; then
+    # If a partial bar is on the current line, move down before the error.
+    [[ -t 1 ]] && printf "\n"
+    cat "$errlog" >&2
+    echo "to-mp3: failed to convert: $src" >&2
+  fi
+  rm -f "$errlog"
+  return $rc
+}
+
 converted=0
 skipped=0
 failed=0
@@ -92,12 +171,9 @@ while IFS= read -r -d '' src; do
     continue
   fi
 
-  $verbose && echo "convert: $src -> $out"
-  if ffmpeg -nostdin -hide_banner -loglevel error -y -i "$src" \
-       -ab 320k -map_metadata 0 -id3v2_version 3 "$out"; then
+  if convert_one "$src" "$out"; then
     converted=$((converted + 1))
   else
-    echo "to-mp3: failed to convert: $src" >&2
     failed=$((failed + 1))
   fi
 done < <(find . -type f "${find_expr[@]}" -print0)

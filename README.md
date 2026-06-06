@@ -35,13 +35,13 @@ to-mp3 --help       # full options and examples
 
 ## Releasing
 
-1. Bump `VERSION` in [`to-mp3`](to-mp3) and `version` / `url` in
-   [`Formula/to-mp3.rb`](Formula/to-mp3.rb).
-2. Tag and push:
-   ```bash
-   git tag v0.1.1 && git push origin v0.1.1
-   ```
-3. Compute the new tarball sha256 and update `Formula/to-mp3.rb` in the tap repo:
-   ```bash
-   curl -sL https://github.com/shhhum/to_mp3/archive/refs/tags/v0.1.1.tar.gz | shasum -a 256
-   ```
+```bash
+./release.sh              # bump patch (0.1.2 -> 0.1.3)
+./release.sh 0.2.0        # explicit version
+```
+
+The script bumps `VERSION` in [`to-mp3`](to-mp3) and version/url/sha256 in
+[`Formula/to-mp3.rb`](Formula/to-mp3.rb), commits, tags, pushes, fetches the
+GitHub tarball to compute sha256, then syncs the formula into
+`../homebrew-tap` and pushes that. Override the tap location with
+`TAP_ROOT=/path/to/tap ./release.sh`.
