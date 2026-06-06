@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 
 EXTENSIONS=(wav flac aiff aif aifc m4a aac ogg oga opus wma ape wv mka)
 
@@ -93,7 +93,7 @@ while IFS= read -r -d '' src; do
   fi
 
   $verbose && echo "convert: $src -> $out"
-  if ffmpeg -hide_banner -loglevel error -y -i "$src" \
+  if ffmpeg -nostdin -hide_banner -loglevel error -y -i "$src" \
        -ab 320k -map_metadata 0 -id3v2_version 3 "$out"; then
     converted=$((converted + 1))
   else
