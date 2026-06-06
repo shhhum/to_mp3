@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# to-mp3 — recursively convert non-mp3 audio files in the current directory
+# to 320kbps mp3. Auto-detects common audio formats. Requires ffmpeg in PATH.
+
+set -euo pipefail
+
+VERSION="0.1.0"
+
+EXTENSIONS=(wav flac aiff aif aifc m4a aac ogg oga opus wma ape wv mka)
+
+usage() {
+  cat <<EOF
+to-mp3 ${VERSION}
+
+Recursively convert non-mp3 audio files in the current directory to high-quality
+(320kbps) mp3. Output is placed next to each source with the extension swapped
+to .mp3. Existing .mp3 files are left alone (unless --force).
+
+Detected extensions: ${EXTENSIONS[*]}
+
+Usage: to-mp3 [options]
+
+Options:
+  -v, --verbose    Print each file as it's processed
+  -n, --dry-run    List files that would be converted, don't convert
+  -f, --force      Overwrite existing .mp3 outputs
+  -h, --help       Show this message
+      --version    Print version
+
+Examples:
+  to-mp3              # convert every detected file under the current directory
+  to-mp3 -n           # preview what would be converted, change nothing
+  to-mp3 -v           # convert with per-file logging
+  to-mp3 -f           # overwrite existing .mp3 outputs
+
+Requires:
+  ffmpeg in PATH (brew install ffmpeg).
+
+More info:
+  https://github.com/shhhum/to_mp3
+EOF
+}
+
+verbose=false
+dry_run=false
+force=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -v|--verbose) verbose=true ;;
+    -n|--dry-run) dry_run=true ;;
+    -f|--force)   force=true ;;
+    -h|--help)    usage; exit 0 ;;
+    --version)    echo "to-mp3 ${VERSION}"; exit 0 ;;
+    *) echo "to-mp3: unknown option: $1" >&2; usage >&2; exit 1 ;;
+  esac
+  shift
+done
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "to-mp3: ffmpeg not found in PATH. Install with: brew install ffmpeg" >&2
+  exit 1
+fi
+
+# Build: find . -type f \( -iname '*.wav' -o -iname '*.flac' -o ... \) -print0
+find_expr=( '(' )
+first=true
+for ext in "${EXTENSIONS[@]}"; do
+  $first || find_expr+=( -o )
+  find_expr+=( -iname "*.${ext}" )
+  first=false
+done
+find_expr+=( ')' )
+
+converted=0
+skipped=0
+failed=0
+
+while IFS= read -r -d '' src; do
+  out="${src%.*}.mp3"
+
+  if [[ -e "$out" ]] && ! $force; then
+    $verbose && echo "skip: $src (mp3 already exists)"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  if $dry_run; then
+    echo "would convert: $src -> $out"
+    converted=$((converted + 1))
+    continue
+  fi
+
+  $verbose && echo "convert: $src -> $out"
+  if ffmpeg -hide_banner -loglevel error -y -i "$src" \
+       -ab 320k -map_metadata 0 -id3v2_version 3 "$out"; then
+    converted=$((converted + 1))
+  else
+    echo "to-mp3: failed to convert: $src" >&2
+    failed=$((failed + 1))
+  fi
+done < <(find . -type f "${find_expr[@]}" -print0)
+
+if [[ $converted -eq 0 && $skipped -eq 0 && $failed -eq 0 ]]; then
+  echo "to-mp3: no convertible audio files found in $(pwd)"
+  exit 0
+fi
+
+if $dry_run; then
+  echo "to-mp3: ${converted} would be converted, ${skipped} skipped"
+else
+  msg="to-mp3: ${converted} converted, ${skipped} skipped"
+  [[ $failed -gt 0 ]] && msg="${msg}, ${failed} failed"
+  echo "$msg"
+fi
+
+[[ $failed -gt 0 ]] && exit 2
+exit 0
